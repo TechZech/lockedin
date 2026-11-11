@@ -65,6 +65,7 @@ class MiniSudokuBrowserSession(BrowserSession):
                 if (notes.count() == 1 and notes.is_visible() and
                         all(frame.locator(f'button.sudoku-input-button[data-number="{number}"]').is_visible()
                             for number in range(1, 7)) and keypad.count() >= 6):
+                    self.mark_board_ready()
                     return
             if not started:
                 for frame in self._game_frames():
@@ -84,7 +85,9 @@ class MiniSudokuBrowserSession(BrowserSession):
 
     def snapshot_board(self) -> Board:
         try:
-            return board_from_json(self._game_frame().evaluate(SNAPSHOT_SCRIPT))
+            board = board_from_json(self._game_frame().evaluate(SNAPSHOT_SCRIPT))
+            self.board_started_at()
+            return board
         except (PlaywrightError, ValueError, BrowserSessionError) as error:
             raise BrowserSessionError(f"could not read a Mini Sudoku board: {error}") from error
 
@@ -102,7 +105,6 @@ class MiniSudokuBrowserSession(BrowserSession):
         progress: Callable[[int, int], None] | None = None,
         target_seconds: int = 0,
         status: Callable[[str], None] | None = None,
-        allow_missing_timer: bool = False,
     ) -> None:
         try:
             if create_action_plan(plan.current, plan.solved) != plan:
@@ -114,8 +116,8 @@ class MiniSudokuBrowserSession(BrowserSession):
         self._check_execution_page(stop)
         expected = plan.current
         self._require_board(expected, "board changed since the plan was created")
-        timed = (prepare_timer(self._game_frame(), target_seconds, allow_missing=allow_missing_timer,
-                               status=status) if plan.actions else False)
+        timed = (prepare_timer(self._game_frame(), target_seconds, started_at=self.board_started_at(),
+                               status=status) if plan.actions else None)
         for completed, action in enumerate(plan.actions, start=1):
             self._check_execution_page(stop)
             self._require_board(expected, f"board changed before cell {action.index}")
@@ -136,7 +138,7 @@ class MiniSudokuBrowserSession(BrowserSession):
                         self._check_notes_off(frame)
                         if "sudoku-cell-active" not in (cell.get_attribute("class") or "").split():
                             raise BrowserSessionError("selected cell changed while waiting for the game timer")
-                    wait_for_game_time(self.page, frame, target_seconds, check, status=status)
+                    wait_for_game_time(self.page, frame, target_seconds, check, timer=timed, status=status)
                 frame.locator(f'button.sudoku-input-button[data-number="{action.target}"]').click(
                     timeout=CLICK_TIMEOUT_MS
                 )

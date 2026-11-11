@@ -35,6 +35,16 @@ class BrowserSession:
     _context: Any = None
     require_login: bool = True
     _owns_browser: bool = False
+    _board_started_at: float | None = None
+
+    def mark_board_ready(self) -> None:
+        self._board_started_at = monotonic()
+
+    def board_started_at(self) -> float:
+        if self._board_started_at is None:
+            self.mark_board_ready()
+        assert self._board_started_at is not None
+        return self._board_started_at
 
     @classmethod
     def launch_temporary(cls) -> Self:

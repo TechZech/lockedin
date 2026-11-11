@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Callable
 
@@ -26,6 +27,22 @@ class TimerUnavailable(BrowserSessionError):
     """The game has no visible timer."""
 
 
+@dataclass(slots=True)
+class GameTimer:
+    target: int
+    observed: int
+    observed_at: float
+    estimated: bool = False
+
+
+def _report_estimate(status: Callable[[str], None] | None) -> None:
+    message = "Game timer unavailable; using an estimated timer for the final move."
+    if status is not None:
+        status(message)
+    else:
+        print(message, flush=True)
+
+
 def read_game_time(frame: Any) -> int:
     try:
         values = frame.evaluate(TIMER_SCRIPT)
@@ -47,46 +64,62 @@ def read_game_time(frame: Any) -> int:
 
 
 def prepare_timer(
-    frame: Any, target: int, *, allow_missing: bool = False,
+    frame: Any, target: int, *, started_at: float | None = None,
     status: Callable[[str], None] | None = None,
-) -> bool:
+) -> GameTimer | None:
     if type(target) is not int or target < 0:
         raise ValueError("time must be a non-negative whole number of seconds")
     if target == 0:
-        return False
+        return None
     try:
-        read_game_time(frame)
+        current = read_game_time(frame)
     except TimerUnavailable:
-        if not allow_missing:
-            raise
-        if status is not None:
-            status("No timer in signed-out Mini Sudoku; completing without a time target.")
-        return False
-    return True
+        _report_estimate(status)
+        return GameTimer(target, 0, monotonic() if started_at is None else started_at, estimated=True)
+    return GameTimer(target, current, monotonic())
 
 
 def wait_for_game_time(
     page: Any, frame: Any, target: int, check: Callable[[], None],
-    *, status: Callable[[str], None] | None = None,
+    *, timer: GameTimer | None = None, status: Callable[[str], None] | None = None,
 ) -> None:
     check()
-    current = read_game_time(frame)
-    last_change = monotonic()
-    if current < target and status is not None:
-        status(f"Waiting for the game timer to reach {target} seconds before the final move.")
-    while current < target:
+    if timer is None:
+        timer = prepare_timer(frame, target, status=status)
+        if timer is None:
+            return
+    if timer.target != target:
+        raise ValueError("timer target does not match the requested time")
+    reported_wait = False
+    while True:
         check()
+        now = monotonic()
+        if timer.estimated:
+            current = timer.observed + now - timer.observed_at
+        else:
+            try:
+                observed = read_game_time(frame)
+            except TimerUnavailable:
+                timer.estimated = True
+                _report_estimate(status)
+                current = timer.observed + now - timer.observed_at
+            else:
+                if observed < timer.observed:
+                    raise BrowserSessionError("the game timer moved backwards; the board may have been reset")
+                if observed > timer.observed:
+                    timer.observed = observed
+                    timer.observed_at = now
+                elif observed < target and now - timer.observed_at >= TIMER_STALL_TIMEOUT:
+                    raise BrowserSessionError("the game timer is not advancing; final move was not made")
+                current = observed
+        if current >= target:
+            break
+        if not reported_wait and status is not None:
+            source = "estimated timer" if timer.estimated else "game timer"
+            status(f"Waiting for the {source} to reach {target} seconds before the final move.")
+            reported_wait = True
         try:
             page.wait_for_timeout(POLL_INTERVAL_MS)
         except PlaywrightError as error:
             raise BrowserSessionError(f"could not wait for the game timer: {error}") from error
-        check()
-        observed = read_game_time(frame)
-        if observed < current:
-            raise BrowserSessionError("the game timer moved backwards; the board may have been reset")
-        if observed > current:
-            current = observed
-            last_change = monotonic()
-        elif monotonic() - last_change >= TIMER_STALL_TIMEOUT:
-            raise BrowserSessionError("the game timer is not advancing; final move was not made")
     check()

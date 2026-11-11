@@ -1,6 +1,6 @@
 # TechZech's LockedIn
 
-A Python project for solving and playing LinkedIn Tango, Mini Sudoku, and Zip through
+A Python project for solving and playing LinkedIn Tango, Mini Sudoku, Zip, and Queens through
 a verified, deterministic pipeline.
 
 This repo is intentionally structured in phases:
@@ -32,6 +32,8 @@ flow and signed-in fixture flow are tested; the signed-in live flow still needs
 validation. Zip has a separate path solver and keyboard-based browser adapter.
 Its signed-out live flow has been tested on a board without walls; live wall
 rendering and the signed-in flow still need validation.
+Queens has a separate region-aware solver and click adapter. Its signed-out live
+flow has been tested; the signed-in live flow still needs validation.
 
 The desktop UI opens each game in a dedicated browser, waits for the board,
 prints the solution and action plan, and plays the signed-in game. Separate
@@ -54,6 +56,14 @@ lockedin/
 │       ├── browser.py
 │       ├── cli.py
 │       ├── gui.py
+│       ├── queens/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
 │       ├── mini_sudoku/
 │       │   ├── __init__.py
 │       │   ├── actions.py
@@ -83,6 +93,8 @@ lockedin/
 │   ├── test_gui.py
 │   ├── test_mini_sudoku.py
 │   ├── test_mini_sudoku_browser.py
+│   ├── test_queens.py
+│   ├── test_queens_browser.py
 │   ├── test_tango_actions.py
 │   ├── test_tango_browser.py
 │   ├── test_tango_dom.py
@@ -162,10 +174,15 @@ game timer reaches that many seconds before the final input. If the timer has
 already passed the target, it finishes immediately; solving and input delays
 can also make the result later than requested. The target is a minimum, not a
 guaranteed exact completion time or a guarantee that LinkedIn saves the game.
-If the timer cannot be read or stops advancing, the app stops without the final
-input. Closing the desktop window cancels a wait. For signed-out Mini Sudoku
-test boards without a visible timer, the time target is skipped and reported;
-signed-in games require a readable timer.
+If the timer is not visible, all games instead use an estimated timer and
+report that fallback in the UI and terminal. The estimate starts when the app
+detects the playable board (or first reads it for a CLI-style session), so
+time spent playing before detection is unknown and completion may be later
+than requested. If a previously visible timer disappears, the estimate
+continues from its last observed value. Estimates cannot account for game
+pauses or resets and do not guarantee LinkedIn's recorded time. Ambiguous or
+invalid timers and timers that stop advancing still stop execution without
+the final input. Closing the desktop window cancels a wait.
 
 **Solve Mini Sudoku** and **Solve Mini Sudoku Test** follow the same signed-in
 and signed-out flows. The signed-in Sudoku browser uses a separate persistent
@@ -190,6 +207,28 @@ and may need updating if the site changes.
 The CLI also supports `python -m lockedin zip` for a dry run against an
 already-open CDP browser, or `python -m lockedin zip --execute` to draw the
 path. As with the desktop flow, start the board first.
+
+**Solve Queens** and **Solve Queens Test** use the same signed-in and separate
+signed-out workflows. Start the game when prompted. The signed-in browser
+uses `~/.lockedin/queens-chromium-profile`, which contains sensitive session
+data. The solver enforces one queen per row, column and color region, and
+prevents queens from touching, including diagonally. Existing queens and X
+marks are treated as constraints; incorrect marks may make the puzzle
+unsolvable. Ambiguous boards are rejected rather than guessed. The adapter
+reads the English accessible cell labels, verifies every click and checks the
+final board, but does not confirm game completion. It supports LinkedIn's
+**Auto-place X's** setting: X marks added to cells ruled out by the newly
+placed queen are checked and preserved. Other unexpected changes still stop
+execution. If a run stops after the
+first click on a cell, that cell remains marked X: clear any unintended X
+before retrying.
+
+The Queens time field follows the shared timer rules above. For a positive
+target, it holds the second click on the final queen until the game timer
+or estimated timer reaches the target.
+The CLI supports `python -m lockedin queens` for a dry run and
+`python -m lockedin queens --execute` for clicks on an already-started CDP
+browser game.
 
 Run the focused solver tests:
 
