@@ -11,6 +11,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from ..browser import BrowserSession, BrowserSessionError
 from ..browser import FEED_URL as FEED_URL
+from ..timing import prepare_timer, wait_for_game_time
 from .actions import ActionPlan, create_action_plan
 from .dom import SNAPSHOT_SCRIPT, board_from_json
 from .model import BOARD_SIZE, Board, Cell
@@ -74,6 +75,8 @@ class TangoBrowserSession(BrowserSession):
         *,
         stop: Event | None = None,
         progress: Callable[[int, int], None] | None = None,
+        target_seconds: int = 0,
+        status: Callable[[str], None] | None = None,
     ) -> None:
         """Execute a plan only while the observed board matches each expected state."""
         try:
@@ -86,13 +89,19 @@ class TangoBrowserSession(BrowserSession):
         self._check_execution_page(stop)
         expected = plan.current
         self._require_board(expected, "board changed since the plan was created")
+        timed = prepare_timer(self.page, target_seconds, status=status) if plan.actions else False
 
         for completed, action in enumerate(plan.actions, start=1):
             position = divmod(action.index, BOARD_SIZE)
             selector = f'{GRID_CELLS}[data-cell-idx="{action.index}"]'
-            for _ in range(action.clicks):
+            for click in range(action.clicks):
                 self._check_execution_page(stop)
                 self._require_board(expected, f"board changed before cell {action.index}")
+                if timed and completed == len(plan.actions) and click == action.clicks - 1:
+                    def check() -> None:
+                        self._check_execution_page(stop)
+                        self._require_board(expected, "board changed while waiting for the game timer")
+                    wait_for_game_time(self.page, self.page, target_seconds, check, status=status)
                 before = expected.cell(position)
                 after = {Cell.UNKNOWN: Cell.SUN, Cell.SUN: Cell.MOON}[before]
                 rows = [list(row) for row in expected.cells]
@@ -124,6 +133,7 @@ class TangoBrowserSession(BrowserSession):
             or url.path.rstrip("/") != "/games/tango"
         ):
             raise BrowserSessionError("the browser is no longer on the Tango page")
+        self.check_login()
 
     def _require_board(self, expected: Board, message: str) -> None:
         if self.snapshot_board() != expected:

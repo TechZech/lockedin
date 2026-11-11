@@ -14,9 +14,12 @@ from .tango.browser import TangoBrowserSession
 from .tango.workflow import solve_and_report
 from .mini_sudoku.browser import MiniSudokuBrowserSession
 from .mini_sudoku.workflow import solve_and_report as solve_sudoku_and_report
+from .zip.browser import ZipBrowserSession
+from .zip.workflow import solve_and_report as solve_zip_and_report
 
 PROFILE = Path.home() / ".lockedin" / "chromium-profile"
 SUDOKU_PROFILE = Path.home() / ".lockedin" / "sudoku-chromium-profile"
+ZIP_PROFILE = Path.home() / ".lockedin" / "zip-chromium-profile"
 
 
 Progress = Callable[[int, int], None]
@@ -37,7 +40,8 @@ class GameAdapter(Protocol[SessionT]):
     def launch(self, profile: Path, test: bool) -> SessionT: ...
     def open(self, session: SessionT, test: bool, stop: threading.Event) -> None: ...
     def solve(self, session: SessionT, stop: threading.Event, progress: Progress,
-              on_start: Callable[[], None]) -> None: ...
+              on_start: Callable[[], None], target_seconds: int, test: bool,
+              status: Callable[[str], None]) -> None: ...
 
 
 class TangoAdapter:
@@ -54,10 +58,12 @@ class TangoAdapter:
             session.open_logged_in_tango(stop)
 
     def solve(self, session: TangoBrowserSession, stop: threading.Event, progress: Progress,
-              on_start: Callable[[], None]) -> None:
+              on_start: Callable[[], None], target_seconds: int, _test: bool,
+              status: Callable[[str], None]) -> None:
         plan = solve_and_report(session)
         on_start()
-        session.execute_actions(plan, stop=stop, progress=progress)
+        session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
+                                status=status)
 
 
 class MiniSudokuAdapter:
@@ -74,10 +80,34 @@ class MiniSudokuAdapter:
             session.open_logged_in_sudoku(stop)
 
     def solve(self, session: MiniSudokuBrowserSession, stop: threading.Event, progress: Progress,
-              on_start: Callable[[], None]) -> None:
+              on_start: Callable[[], None], target_seconds: int, test: bool,
+              status: Callable[[str], None]) -> None:
         plan = solve_sudoku_and_report(session)
         on_start()
-        session.execute_actions(plan, stop=stop, progress=progress)
+        session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
+                                status=status, allow_missing_timer=test)
+
+
+class ZipAdapter:
+    name = "Zip"
+
+    def launch(self, profile: Path, test: bool) -> ZipBrowserSession:
+        return (ZipBrowserSession.launch_temporary() if test
+                else ZipBrowserSession.launch_persistent(profile))
+
+    def open(self, session: ZipBrowserSession, test: bool, stop: threading.Event) -> None:
+        if test:
+            session.open_zip()
+        else:
+            session.open_logged_in_zip(stop)
+
+    def solve(self, session: ZipBrowserSession, stop: threading.Event, progress: Progress,
+              on_start: Callable[[], None], target_seconds: int, _test: bool,
+              status: Callable[[str], None]) -> None:
+        plan = solve_zip_and_report(session)
+        on_start()
+        session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
+                                status=status)
 
 
 class GameWorker(Generic[SessionT]):
@@ -88,16 +118,16 @@ class GameWorker(Generic[SessionT]):
         self.profile = profile
         self.test = test
         self.messages: queue.Queue[tuple[str, str]] = queue.Queue()
-        self.requests: queue.Queue[None] = queue.Queue()
+        self.requests: queue.Queue[int] = queue.Queue()
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name=f"{adapter.name.lower()}-browser")
 
-    def start(self) -> None:
-        self.requests.put(None)
+    def start(self, target_seconds: int = 0) -> None:
+        self.requests.put(target_seconds)
         self.thread.start()
 
-    def request_solve(self) -> None:
-        self.requests.put(None)
+    def request_solve(self, target_seconds: int = 0) -> None:
+        self.requests.put(target_seconds)
 
     def _run(self) -> None:
         session = None
@@ -109,7 +139,7 @@ class GameWorker(Generic[SessionT]):
             session = self.adapter.launch(self.profile, self.test)
             while not self.stop.is_set():
                 try:
-                    self.requests.get_nowait()
+                    target_seconds = self.requests.get_nowait()
                 except queue.Empty:
                     session.keep_alive()
                     continue
@@ -126,20 +156,30 @@ class GameWorker(Generic[SessionT]):
                         break
                     self.messages.put(("status", "Reading and solving the board..."))
                     if self.test:
-                        start_message = "Test mode: clicking the board..."
+                        start_message = ("Test mode: drawing the path..." if self.adapter.name == "Zip"
+                                         else "Test mode: clicking the board...")
                         progress_prefix = "Test mode"
                         ready_message = "Test board matches the solution; game completion was not verified."
                     else:
-                        start_message = "Clicking the signed-in game board..."
+                        start_message = ("Drawing the signed-in game path..." if self.adapter.name == "Zip"
+                                         else "Clicking the signed-in game board...")
                         progress_prefix = "Signed-in game"
                         ready_message = "Board matches the solution; game completion was not verified."
                     def report_progress(done: int, total: int) -> None:
                         self.messages.put(("status", f"{progress_prefix}: filled {done}/{total} cells."))
+                    timing_notice = ""
+                    def report_timing(message: str) -> None:
+                        nonlocal timing_notice
+                        if message.startswith("No timer"):
+                            timing_notice = f" {message}"
+                            print(message, flush=True)
+                        self.messages.put(("status", message))
                     self.adapter.solve(
                         session, self.stop, report_progress,
                         lambda: self.messages.put(("status", start_message)),
+                        target_seconds, self.test, report_timing,
                     )
-                    self.messages.put(("ready", ready_message))
+                    self.messages.put(("ready", ready_message + timing_notice))
                 except (BrowserSessionError, ValueError) as error:
                     if not self.stop.is_set():
                         print(f"error: {error}", file=sys.stderr, flush=True)
@@ -148,6 +188,8 @@ class GameWorker(Generic[SessionT]):
                             if self.test
                             else " The game board may be partially filled; retry to re-read it."
                         )
+                        if self.adapter.name == "Zip":
+                            suffix = " The path may be partially drawn; reset the board before retrying."
                         self.messages.put(("ready", f"Could not solve: {error}.{suffix}"))
         except Exception as error:
             if not self.stop.is_set():
@@ -170,6 +212,23 @@ class TangoWorker(GameWorker[TangoBrowserSession]):
 class MiniSudokuWorker(GameWorker[MiniSudokuBrowserSession]):
     def __init__(self, profile: Path = SUDOKU_PROFILE, test: bool = False) -> None:
         super().__init__(MiniSudokuAdapter(), profile, test)
+
+
+class ZipWorker(GameWorker[ZipBrowserSession]):
+    def __init__(self, profile: Path = ZIP_PROFILE, test: bool = False) -> None:
+        super().__init__(ZipAdapter(), profile, test)
+
+
+def parse_target_seconds(value: str) -> int:
+    value = value.strip()
+    if not value:
+        return 0
+    if not value.isascii() or not value.isdigit():
+        raise ValueError("Time must be a non-negative whole number of seconds.")
+    try:
+        return int(value)
+    except ValueError as error:
+        raise ValueError("Time is too large.") from error
 
 
 def main() -> int:
@@ -196,31 +255,42 @@ def main() -> int:
     ttk.Label(frame, text="LinkedIn game solvers", font=("Helvetica", 18, "bold")).grid(pady=(0, 12))
     status = tk.StringVar(value="Solve today's game, or use the test button for a signed-out practice board.")
     ttk.Label(frame, textvariable=status, wraplength=380).grid(pady=(0, 12))
-    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker] = {}
+    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker] = {}
     buttons: dict[tuple[str, bool], ttk.Button] = {}
-    worker_types = {"Tango": TangoWorker, "Mini Sudoku": MiniSudokuWorker}
+    worker_types = {"Tango": TangoWorker, "Mini Sudoku": MiniSudokuWorker, "Zip": ZipWorker}
+    times = {game: tk.StringVar(value="") for game in worker_types}
     closing = False
 
     def solve(game: str, test: bool) -> None:
         key = (game, test)
+        try:
+            target_seconds = parse_target_seconds(times[game].get())
+        except ValueError as error:
+            status.set(str(error))
+            return
         buttons[key].configure(state="disabled")
         worker = workers.get(key)
         if worker is None or not worker.thread.is_alive():
             worker = workers[key] = worker_types[game](test=test)
-            worker.start()
+            worker.start(target_seconds)
         else:
-            worker.request_solve()
+            worker.request_solve(target_seconds)
         status.set(f"Opening {game}{' test' if test else ''}...")
 
     for game in worker_types:
+        game_frame = ttk.Frame(frame)
+        game_frame.grid(pady=(8, 0))
+        ttk.Label(game_frame, text=f"{game} time (seconds):").grid(row=0, column=0, columnspan=2)
+        ttk.Entry(game_frame, textvariable=times[game], width=10).grid(row=0, column=2, padx=(6, 0))
         for test in (False, True):
             key = (game, test)
-            buttons[key] = ttk.Button(frame, text=f"Solve {game}{' Test' if test else ''}",
+            buttons[key] = ttk.Button(game_frame, text=f"Solve {game}{' Test' if test else ''}",
                                       command=lambda game=game, test=test: solve(game, test))
-            buttons[key].grid(pady=(8, 0))
+            buttons[key].grid(row=1, column=int(test), pady=(4, 0))
     ttk.Label(
         frame,
-        text="Solve plays your signed-in game. Test uses a separate signed-out browser.",
+        text="Blank or 0: finish as fast as possible. Solve plays your signed-in game; "
+             "Test uses a separate signed-out browser.",
         wraplength=380,
         padding=(0, 12, 0, 0),
     ).grid()
