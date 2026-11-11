@@ -118,6 +118,28 @@ class MiniSudokuBrowserTests(unittest.TestCase):
         self.assertEqual(self.frame.evaluate("window.clicks"), [[0, 3], [1, 5], [2, 4]])
         self.assertEqual(progress, [(1, 3), (2, 3), (3, 3)])
 
+    def test_waits_for_timer_before_final_keypad_entry(self):
+        self.frame.evaluate("""() => {
+          const timer = document.createElement('span'); timer.textContent = '0:00';
+          document.body.prepend(timer); window.inputTimes = [];
+          document.querySelector('#keypad').addEventListener(
+            'click', () => window.inputTimes.push(timer.textContent), true);
+          setTimeout(() => timer.textContent = '0:05', 1000);
+        }""")
+        self.session.execute_actions(self.plan, target_seconds=5)
+        self.assertEqual(self.frame.evaluate("window.inputTimes"), ["0:00", "0:00", "0:05"])
+        self.assertEqual(self.session.snapshot_board(), SOLVED)
+
+    def test_missing_timer_only_allowed_in_test_mode(self):
+        with self.assertRaisesRegex(BrowserSessionError, "timer is not visible"):
+            self.session.execute_actions(self.plan, target_seconds=5)
+        self.assertEqual(self.frame.evaluate("window.clicks"), [])
+        statuses = []
+        self.session.execute_actions(self.plan, target_seconds=5, allow_missing_timer=True,
+                                     status=statuses.append)
+        self.assertIn("without a time target", statuses[0])
+        self.assertEqual(self.session.snapshot_board(), SOLVED)
+
     def test_intro_hidden_board_is_not_read_until_game_is_started(self):
         self.frame.set_content(INTRO_GAME)
         with self.assertRaisesRegex(BrowserSessionError, "board not found"):

@@ -1,6 +1,6 @@
 # TechZech's LockedIn
 
-A Python project for solving and playing LinkedIn Tango and Mini Sudoku through
+A Python project for solving and playing LinkedIn Tango, Mini Sudoku, and Zip through
 a verified, deterministic pipeline.
 
 This repo is intentionally structured in phases:
@@ -29,9 +29,11 @@ The solver and verified click executor have been tested locally and on live
 Tango boards. Live page compatibility can change and needs continued validation.
 Mini Sudoku has a separate 6x6 solver and browser adapter. Its signed-out live
 flow and signed-in fixture flow are tested; the signed-in live flow still needs
-validation.
+validation. Zip has a separate path solver and keyboard-based browser adapter.
+Its signed-out live flow has been tested on a board without walls; live wall
+rendering and the signed-in flow still need validation.
 
-The desktop UI opens either game in a dedicated browser, waits for the board,
+The desktop UI opens each game in a dedicated browser, waits for the board,
 prints the solution and action plan, and plays the signed-in game. Separate
 signed-out test modes also perform verified inputs.
 
@@ -53,6 +55,14 @@ lockedin/
 │       ├── cli.py
 │       ├── gui.py
 │       ├── mini_sudoku/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
+│       ├── zip/
 │       │   ├── __init__.py
 │       │   ├── actions.py
 │       │   ├── browser.py
@@ -145,6 +155,18 @@ sensitive session data; keep it private. If sign-in times out, verification
 blocks access, the board cannot be read, or the solver stalls, check the message
 in the window and the terminal output, then click **Solve Tango** to retry.
 
+Each game has a **time (seconds)** field shared by its Solve and Test buttons.
+Leave it blank or enter `0` to finish as fast as possible. For a positive whole
+number, the app performs the other inputs first, then waits until the visible
+game timer reaches that many seconds before the final input. If the timer has
+already passed the target, it finishes immediately; solving and input delays
+can also make the result later than requested. The target is a minimum, not a
+guaranteed exact completion time or a guarantee that LinkedIn saves the game.
+If the timer cannot be read or stops advancing, the app stops without the final
+input. Closing the desktop window cancels a wait. For signed-out Mini Sudoku
+test boards without a visible timer, the time target is skipped and reported;
+signed-in games require a readable timer.
+
 **Solve Mini Sudoku** and **Solve Mini Sudoku Test** follow the same signed-in
 and signed-out flows. The signed-in Sudoku browser uses a separate persistent
 profile at `~/.lockedin/sudoku-chromium-profile`, so sign in there separately.
@@ -155,6 +177,19 @@ and rejects invalid or ambiguous boards. It verifies the 2x3 region layout,
 each cell selection and entry, and the final board; it does not verify game
 completion. If execution stops, the board may be partially filled: retry to
 read it and make a fresh plan.
+
+**Solve Zip** and **Solve Zip Test** follow the same signed-in and signed-out
+flows. Start the game in the browser when prompted. The signed-in browser uses
+the separate profile `~/.lockedin/zip-chromium-profile`; it contains sensitive
+session data. Zip reads the numbered cells and walls, finds a path through every
+cell, and uses arrow keys to draw it. It checks the board and each path update,
+but does not verify game completion. Reset a partially drawn path before
+retrying. The wall adapter depends on LinkedIn's current rendered CSS classes
+and may need updating if the site changes.
+
+The CLI also supports `python -m lockedin zip` for a dry run against an
+already-open CDP browser, or `python -m lockedin zip --execute` to draw the
+path. As with the desktop flow, start the board first.
 
 Run the focused solver tests:
 

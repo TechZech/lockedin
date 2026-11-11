@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import Error as PlaywrightError
 
 from ..browser import BrowserSession, BrowserSessionError
+from ..timing import prepare_timer, wait_for_game_time
 from .actions import ActionPlan, create_action_plan
 from .dom import SNAPSHOT_SCRIPT, board_from_json
 from .model import BOARD_SIZE, Board
@@ -99,6 +100,9 @@ class MiniSudokuBrowserSession(BrowserSession):
         *,
         stop: Event | None = None,
         progress: Callable[[int, int], None] | None = None,
+        target_seconds: int = 0,
+        status: Callable[[str], None] | None = None,
+        allow_missing_timer: bool = False,
     ) -> None:
         try:
             if create_action_plan(plan.current, plan.solved) != plan:
@@ -110,6 +114,8 @@ class MiniSudokuBrowserSession(BrowserSession):
         self._check_execution_page(stop)
         expected = plan.current
         self._require_board(expected, "board changed since the plan was created")
+        timed = (prepare_timer(self._game_frame(), target_seconds, allow_missing=allow_missing_timer,
+                               status=status) if plan.actions else False)
         for completed, action in enumerate(plan.actions, start=1):
             self._check_execution_page(stop)
             self._require_board(expected, f"board changed before cell {action.index}")
@@ -123,6 +129,14 @@ class MiniSudokuBrowserSession(BrowserSession):
                 self._check_execution_page(stop)
                 self._require_board(expected, f"board changed while selecting cell {action.index}")
                 self._check_notes_off(frame)
+                if timed and completed == len(plan.actions):
+                    def check() -> None:
+                        self._check_execution_page(stop)
+                        self._require_board(expected, "board changed while waiting for the game timer")
+                        self._check_notes_off(frame)
+                        if "sudoku-cell-active" not in (cell.get_attribute("class") or "").split():
+                            raise BrowserSessionError("selected cell changed while waiting for the game timer")
+                    wait_for_game_time(self.page, frame, target_seconds, check, status=status)
                 frame.locator(f'button.sudoku-input-button[data-number="{action.target}"]').click(
                     timeout=CLICK_TIMEOUT_MS
                 )

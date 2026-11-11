@@ -3,7 +3,7 @@ from pathlib import Path
 from threading import Event
 from unittest.mock import Mock, patch
 
-from lockedin.gui import TangoWorker
+from lockedin.gui import TangoWorker, parse_target_seconds
 from lockedin.tango.browser import BrowserSessionError
 from lockedin.tango.model import Board
 
@@ -196,3 +196,31 @@ class TestModeTests(unittest.TestCase):
         self.assertIn("cell 4 did not update", message)
         self.assertIn("may be partially filled", message)
         self.assertTrue(session.closed)
+
+    @patch("lockedin.gui.TangoBrowserSession.launch_persistent")
+    def test_each_request_captures_its_own_target(self, launch: Mock) -> None:
+        session = FakeSession()
+        launch.return_value = session
+        worker = TangoWorker(Path("/test/profile"))
+        worker.start(5)
+        try:
+            while worker.messages.get(timeout=3)[0] != "ready":
+                pass
+            worker.request_solve(12)
+            while worker.messages.get(timeout=3)[0] != "ready":
+                pass
+        finally:
+            worker.stop.set()
+            worker.thread.join(timeout=3)
+        self.assertEqual([kwargs["target_seconds"] for _, kwargs in session.execution_calls], [5, 12])
+
+
+class TimeInputTests(unittest.TestCase):
+    def test_valid_inputs(self):
+        for value, expected in (("", 0), ("   ", 0), ("0", 0), (" 5 ", 5), ("120", 120)):
+            self.assertEqual(parse_target_seconds(value), expected)
+
+    def test_invalid_inputs(self):
+        for value in ("-1", "1.5", "abc", "+2", "１２"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                parse_target_seconds(value)

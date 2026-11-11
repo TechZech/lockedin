@@ -83,6 +83,23 @@ class TangoExecutionBrowserTests(unittest.TestCase):
         self.assertEqual(self.session.snapshot_board(), SOLVED)
         self.assertEqual(progress, [(1, 3), (2, 3), (3, 3)])
 
+    def test_waits_until_displayed_time_before_final_click(self) -> None:
+        self.page.evaluate("""() => {
+          const timer = document.createElement('span'); timer.textContent = '0:00';
+          document.body.prepend(timer); window.inputTimes = [];
+          document.querySelector('[data-testid="interactive-grid"]').addEventListener(
+            'click', () => window.inputTimes.push(timer.textContent), true);
+          setTimeout(() => timer.textContent = '0:05', 1000);
+        }""")
+        self.session.execute_actions(self.plan, target_seconds=5)
+        self.assertEqual(self.page.evaluate("window.clicks"), [0, 1, 1, 4, 4])
+        self.assertEqual(self.page.evaluate("window.inputTimes"), ["0:00"] * 4 + ["0:05"])
+
+    def test_timed_execution_requires_timer_before_any_click(self) -> None:
+        with self.assertRaisesRegex(BrowserSessionError, "timer is not visible"):
+            self.session.execute_actions(self.plan, target_seconds=5)
+        self.assertEqual(self.page.evaluate("window.clicks"), [])
+
     def test_signed_in_worker_executes_against_local_browser_fixture(self) -> None:
         results = {}
         execute = TangoBrowserSession.execute_actions
