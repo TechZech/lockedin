@@ -21,6 +21,14 @@ class FakeSession:
 
 
 class CliTests(unittest.TestCase):
+    @patch("lockedin.cli.WendBrowserSession.connect_over_cdp")
+    def test_wend_execution_uses_trial_workflow(self, connect) -> None:
+        session = connect.return_value
+        session.solve_trials.return_value = True
+        self.assertEqual(main(["wend", "--execute"]), 0)
+        session.solve_trials.assert_called_once()
+        session.close.assert_called_once()
+
     @patch("lockedin.gui.main", return_value=0)
     def test_ui_command_opens_desktop_interface(self, gui_main) -> None:
         self.assertEqual(main(["ui"]), 0)
