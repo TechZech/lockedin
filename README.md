@@ -3,6 +3,8 @@
 LockedIn solves and plays LinkedIn Tango, Mini Sudoku, Zip, Queens, Patches,
 and Wend using a Python desktop app or command-line interface.
 
+![LockedIn desktop app showing the six game cards](docs/images/desktop-app.png)
+
 > **Before you play:** The desktop app sends inputs to the game, including
 > signed-in games. A board matching the solution does not necessarily mean
 > LinkedIn registered completion. Automation depends on LinkedIn's current
