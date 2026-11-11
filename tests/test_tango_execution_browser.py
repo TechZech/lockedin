@@ -95,10 +95,20 @@ class TangoExecutionBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate("window.clicks"), [0, 1, 1, 4, 4])
         self.assertEqual(self.page.evaluate("window.inputTimes"), ["0:00"] * 4 + ["0:05"])
 
-    def test_timed_execution_requires_timer_before_any_click(self) -> None:
-        with self.assertRaisesRegex(BrowserSessionError, "timer is not visible"):
-            self.session.execute_actions(self.plan, target_seconds=5)
-        self.assertEqual(self.page.evaluate("window.clicks"), [])
+    def test_missing_timer_uses_estimate_for_final_click(self) -> None:
+        self.page.evaluate("""() => {
+          window.clickTimes = [];
+          document.querySelector('[data-testid="interactive-grid"]').addEventListener(
+            'click', () => window.clickTimes.push(performance.now()), true);
+        }""")
+        started = self.page.evaluate("performance.now()")
+        statuses = []
+        self.session.mark_board_ready()
+        self.session.execute_actions(self.plan, target_seconds=1, status=statuses.append)
+        times = self.page.evaluate("window.clickTimes")
+        self.assertLess(times[-2] - started, 1000)
+        self.assertGreaterEqual(times[-1] - started, 1000)
+        self.assertTrue(any("estimated timer" in status for status in statuses))
 
     def test_signed_in_worker_executes_against_local_browser_fixture(self) -> None:
         results = {}

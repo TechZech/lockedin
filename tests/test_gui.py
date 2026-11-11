@@ -51,6 +51,23 @@ class TangoWorkerTests(unittest.TestCase):
                 statuses.append(message)
 
     @patch("lockedin.gui.TangoBrowserSession.launch_persistent")
+    def test_estimated_timer_notice_remains_in_ready_status(self, launch: Mock) -> None:
+        session = FakeSession()
+        def execute(*args, **kwargs):
+            kwargs["status"]("Game timer unavailable; using an estimated timer for the final move.")
+            kwargs["status"]("Waiting for the estimated timer to reach 5 seconds before the final move.")
+        session.execute_actions = Mock(side_effect=execute)
+        launch.return_value = session
+        worker = TangoWorker(Path("/test/profile"))
+        worker.start(5)
+        try:
+            message = self.wait_for(worker, "ready")
+        finally:
+            worker.stop.set()
+            worker.thread.join(timeout=3)
+        self.assertIn("estimated timer", message)
+
+    @patch("lockedin.gui.TangoBrowserSession.launch_persistent")
     def test_solve_and_retry_executes_fresh_plan_then_closes_browser(self, launch: Mock) -> None:
         session = FakeSession()
         launch.return_value = session

@@ -130,14 +130,20 @@ class MiniSudokuBrowserTests(unittest.TestCase):
         self.assertEqual(self.frame.evaluate("window.inputTimes"), ["0:00", "0:00", "0:05"])
         self.assertEqual(self.session.snapshot_board(), SOLVED)
 
-    def test_missing_timer_only_allowed_in_test_mode(self):
-        with self.assertRaisesRegex(BrowserSessionError, "timer is not visible"):
-            self.session.execute_actions(self.plan, target_seconds=5)
-        self.assertEqual(self.frame.evaluate("window.clicks"), [])
+    def test_missing_timer_uses_estimate(self):
+        self.frame.evaluate("""() => {
+          window.inputTimes = [];
+          document.querySelector('#keypad').addEventListener(
+            'click', () => window.inputTimes.push(performance.now()), true);
+        }""")
+        started = self.frame.evaluate("performance.now()")
+        self.session.mark_board_ready()
         statuses = []
-        self.session.execute_actions(self.plan, target_seconds=5, allow_missing_timer=True,
-                                     status=statuses.append)
-        self.assertIn("without a time target", statuses[0])
+        self.session.execute_actions(self.plan, target_seconds=1, status=statuses.append)
+        times = self.frame.evaluate("window.inputTimes")
+        self.assertLess(times[-2] - started, 1000)
+        self.assertGreaterEqual(times[-1] - started, 1000)
+        self.assertIn("estimated timer", statuses[0])
         self.assertEqual(self.session.snapshot_board(), SOLVED)
 
     def test_intro_hidden_board_is_not_read_until_game_is_started(self):

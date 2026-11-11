@@ -16,10 +16,13 @@ from .mini_sudoku.browser import MiniSudokuBrowserSession
 from .mini_sudoku.workflow import solve_and_report as solve_sudoku_and_report
 from .zip.browser import ZipBrowserSession
 from .zip.workflow import solve_and_report as solve_zip_and_report
+from .queens.browser import QueensBrowserSession
+from .queens.workflow import solve_and_report as solve_queens_and_report
 
 PROFILE = Path.home() / ".lockedin" / "chromium-profile"
 SUDOKU_PROFILE = Path.home() / ".lockedin" / "sudoku-chromium-profile"
 ZIP_PROFILE = Path.home() / ".lockedin" / "zip-chromium-profile"
+QUEENS_PROFILE = Path.home() / ".lockedin" / "queens-chromium-profile"
 
 
 Progress = Callable[[int, int], None]
@@ -80,12 +83,12 @@ class MiniSudokuAdapter:
             session.open_logged_in_sudoku(stop)
 
     def solve(self, session: MiniSudokuBrowserSession, stop: threading.Event, progress: Progress,
-              on_start: Callable[[], None], target_seconds: int, test: bool,
+              on_start: Callable[[], None], target_seconds: int, _test: bool,
               status: Callable[[str], None]) -> None:
         plan = solve_sudoku_and_report(session)
         on_start()
         session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
-                                status=status, allow_missing_timer=test)
+                                status=status)
 
 
 class ZipAdapter:
@@ -105,6 +108,28 @@ class ZipAdapter:
               on_start: Callable[[], None], target_seconds: int, _test: bool,
               status: Callable[[str], None]) -> None:
         plan = solve_zip_and_report(session)
+        on_start()
+        session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
+                                status=status)
+
+
+class QueensAdapter:
+    name = "Queens"
+
+    def launch(self, profile: Path, test: bool) -> QueensBrowserSession:
+        return (QueensBrowserSession.launch_temporary() if test
+                else QueensBrowserSession.launch_persistent(profile))
+
+    def open(self, session: QueensBrowserSession, test: bool, stop: threading.Event) -> None:
+        if test:
+            session.open_queens()
+        else:
+            session.open_logged_in_queens(stop)
+
+    def solve(self, session: QueensBrowserSession, stop: threading.Event, progress: Progress,
+              on_start: Callable[[], None], target_seconds: int, _test: bool,
+              status: Callable[[str], None]) -> None:
+        plan = solve_queens_and_report(session)
         on_start()
         session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
                                 status=status)
@@ -170,7 +195,7 @@ class GameWorker(Generic[SessionT]):
                     timing_notice = ""
                     def report_timing(message: str) -> None:
                         nonlocal timing_notice
-                        if message.startswith("No timer"):
+                        if message.startswith("Game timer unavailable;"):
                             timing_notice = f" {message}"
                             print(message, flush=True)
                         self.messages.put(("status", message))
@@ -190,6 +215,9 @@ class GameWorker(Generic[SessionT]):
                         )
                         if self.adapter.name == "Zip":
                             suffix = " The path may be partially drawn; reset the board before retrying."
+                        elif self.adapter.name == "Queens":
+                            suffix = (" The board may be partially filled; check X marks before retrying, "
+                                      "especially on the last attempted cell.")
                         self.messages.put(("ready", f"Could not solve: {error}.{suffix}"))
         except Exception as error:
             if not self.stop.is_set():
@@ -217,6 +245,11 @@ class MiniSudokuWorker(GameWorker[MiniSudokuBrowserSession]):
 class ZipWorker(GameWorker[ZipBrowserSession]):
     def __init__(self, profile: Path = ZIP_PROFILE, test: bool = False) -> None:
         super().__init__(ZipAdapter(), profile, test)
+
+
+class QueensWorker(GameWorker[QueensBrowserSession]):
+    def __init__(self, profile: Path = QUEENS_PROFILE, test: bool = False) -> None:
+        super().__init__(QueensAdapter(), profile, test)
 
 
 def parse_target_seconds(value: str) -> int:
@@ -255,9 +288,10 @@ def main() -> int:
     ttk.Label(frame, text="LinkedIn game solvers", font=("Helvetica", 18, "bold")).grid(pady=(0, 12))
     status = tk.StringVar(value="Solve today's game, or use the test button for a signed-out practice board.")
     ttk.Label(frame, textvariable=status, wraplength=380).grid(pady=(0, 12))
-    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker] = {}
+    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker | QueensWorker] = {}
     buttons: dict[tuple[str, bool], ttk.Button] = {}
-    worker_types = {"Tango": TangoWorker, "Mini Sudoku": MiniSudokuWorker, "Zip": ZipWorker}
+    worker_types = {"Tango": TangoWorker, "Mini Sudoku": MiniSudokuWorker, "Zip": ZipWorker,
+                    "Queens": QueensWorker}
     times = {game: tk.StringVar(value="") for game in worker_types}
     closing = False
 

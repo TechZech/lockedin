@@ -46,6 +46,7 @@ class ZipBrowserSession(BrowserSession):
             self._check_page(stop)
             grid = self.page.locator(GRID)
             if grid.count() == 1 and grid.is_visible():
+                self.mark_board_ready()
                 return
             if monotonic() >= deadline:
                 raise BrowserSessionError("timed out waiting for the Zip board; start the game")
@@ -59,7 +60,9 @@ class ZipBrowserSession(BrowserSession):
             raise BrowserSessionError(f"could not read a Zip board: {error}") from error
 
     def snapshot_board(self) -> Board:
-        return self._snapshot().board
+        board = self._snapshot().board
+        self.board_started_at()
+        return board
 
     def solve(self) -> tuple[int, ...]:
         return self.plan_solution().path
@@ -82,7 +85,8 @@ class ZipBrowserSession(BrowserSession):
         expected = Snapshot(plan.board, frozenset((plan.path[0],)))
         if self._snapshot() != expected:
             raise BrowserSessionError("board changed or already has a partial path; reset it and retry")
-        timed = prepare_timer(self.page, target_seconds, status=status) if plan.moves else False
+        timed = (prepare_timer(self.page, target_seconds, started_at=self.board_started_at(), status=status)
+                 if plan.moves else None)
         try:
             self.page.locator(GRID).focus(timeout=2000)
         except PlaywrightError as error:
@@ -96,7 +100,7 @@ class ZipBrowserSession(BrowserSession):
                     self._check_page(stop)
                     if self._snapshot() != expected:
                         raise BrowserSessionError("Zip board changed while waiting for the game timer")
-                wait_for_game_time(self.page, self.page, target_seconds, check, status=status)
+                wait_for_game_time(self.page, self.page, target_seconds, check, timer=timed, status=status)
                 try:
                     self.page.locator(GRID).focus(timeout=2000)
                 except PlaywrightError as error:

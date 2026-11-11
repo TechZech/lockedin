@@ -50,6 +50,7 @@ class TangoBrowserSession(BrowserSession):
                 and self.page.locator(GRID_CELLS).count() == 36
             ):
                 self.check_login()
+                self.mark_board_ready()
                 return
             if monotonic() >= deadline:
                 raise BrowserSessionError("timed out waiting for the Tango board; sign in and start the game")
@@ -59,7 +60,9 @@ class TangoBrowserSession(BrowserSession):
     def snapshot_board(self) -> Board:
         try:
             snapshot = self.page.evaluate(SNAPSHOT_SCRIPT)
-            return board_from_json(snapshot)
+            board = board_from_json(snapshot)
+            self.board_started_at()
+            return board
         except Exception as error:
             raise BrowserSessionError(f"could not read a Tango board from the browser: {error}") from error
 
@@ -89,7 +92,8 @@ class TangoBrowserSession(BrowserSession):
         self._check_execution_page(stop)
         expected = plan.current
         self._require_board(expected, "board changed since the plan was created")
-        timed = prepare_timer(self.page, target_seconds, status=status) if plan.actions else False
+        timed = (prepare_timer(self.page, target_seconds, started_at=self.board_started_at(), status=status)
+                 if plan.actions else None)
 
         for completed, action in enumerate(plan.actions, start=1):
             position = divmod(action.index, BOARD_SIZE)
@@ -101,7 +105,7 @@ class TangoBrowserSession(BrowserSession):
                     def check() -> None:
                         self._check_execution_page(stop)
                         self._require_board(expected, "board changed while waiting for the game timer")
-                    wait_for_game_time(self.page, self.page, target_seconds, check, status=status)
+                    wait_for_game_time(self.page, self.page, target_seconds, check, timer=timed, status=status)
                 before = expected.cell(position)
                 after = {Cell.UNKNOWN: Cell.SUN, Cell.SUN: Cell.MOON}[before]
                 rows = [list(row) for row in expected.cells]

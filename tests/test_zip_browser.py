@@ -99,6 +99,22 @@ class ZipBrowserTests(unittest.TestCase):
             self.session.execute_actions(plan_board(self.session.snapshot_board()), target_seconds=5)
         self.assertEqual(self.page.evaluate("window.moves"), ["ArrowDown", "ArrowRight"])
 
+    def test_missing_timer_uses_estimate_for_final_move(self):
+        self.page.evaluate("""() => {
+          window.inputTimes = [];
+          document.querySelector('#grid').addEventListener(
+            'keydown', () => window.inputTimes.push(performance.now()), true);
+        }""")
+        plan = plan_board(self.session.snapshot_board())
+        started = self.page.evaluate("performance.now()")
+        self.session.mark_board_ready()
+        statuses = []
+        self.session.execute_actions(plan, target_seconds=1, status=statuses.append)
+        times = self.page.evaluate("window.inputTimes")
+        self.assertLess(times[-2] - started, 1000)
+        self.assertGreaterEqual(times[-1] - started, 1000)
+        self.assertTrue(any("estimated timer" in status for status in statuses))
+
     def test_rejects_stale_partial_and_invalid_plans(self):
         plan = plan_board(self.session.snapshot_board())
         self.page.locator('[data-cell-idx="2"]').evaluate(
