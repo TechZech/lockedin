@@ -1,7 +1,7 @@
 # TechZech's LockedIn
 
-A Python project for solving and playing LinkedIn Tango, Mini Sudoku, Zip, Queens, and Patches through
-a verified, deterministic pipeline.
+A Python project for solving and playing LinkedIn Tango, Mini Sudoku, Zip, Queens, Patches,
+and Wend.
 
 This repo is intentionally structured in phases:
 
@@ -38,6 +38,9 @@ Patches has a rectangle solver and drag adapter. Its signed-out live flow,
 including the timed final patch, has been tested; the signed-in live flow still
 needs validation. Its browser integration reads English accessible labels and
 can stop if LinkedIn changes its markup.
+Wend has an experimental dictionary-based trial solver. It checks which words
+LinkedIn locks and undoes rejected paths. The signed-out live flow has been
+tested; the signed-in live flow still needs validation.
 
 The desktop UI opens each game in a dedicated browser, waits for the board,
 prints the solution and action plan, and plays the signed-in game. Separate
@@ -60,6 +63,14 @@ lockedin/
 │       ├── browser.py
 │       ├── cli.py
 │       ├── gui.py
+│       ├── wend/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
 │       ├── patches/
 │       │   ├── __init__.py
 │       │   ├── actions.py
@@ -256,6 +267,33 @@ The Patches time field follows the shared timer rules above; the final patch is
 drawn only after the target is reached. The CLI supports
 `python -m lockedin patches` for a dry run and
 `python -m lockedin patches --execute` for an already-started CDP browser game.
+
+**Solve Wend** opens a dedicated signed-in browser with the profile
+`~/.lockedin/wend-chromium-profile`, which contains sensitive session data.
+**Solve Wend Test** uses a separate temporary, signed-out browser. Start the
+game when prompted. Wend reads the letters, blocked cells and word lengths, then searches
+for dictionary word paths that cover every letter once. It tries words from
+complete candidate sets, preserves words that LinkedIn marks locked, and
+undoes unconfirmed paths without using hints. It stops after 500 word attempts,
+if the dictionary has no remaining candidate, or if the board changes
+unexpectedly. A locked word alone does not establish that the game is finished:
+the test reports success only after the guest results page confirms it. The
+signed-in flow reports completion as unverified if all words lock but no
+recognizable result is shown. These checks depend on LinkedIn's current page
+and English results text; the signed-in flow has not yet been tested live.
+
+The dictionary is supplied by the `wordfreq` dependency and is not LinkedIn's
+official word list. Some puzzles may therefore have no candidate, or many
+candidates and take a long time. A stopped run can leave confirmed words on
+the board; reset it before retrying. The CLI command `python -m lockedin wend`
+only prints a candidate when it is
+unique within the dictionary; that uniqueness does not verify LinkedIn's
+answer. Use `python -m lockedin wend --execute` to try words on an already
+started CDP browser game.
+
+The Wend time field follows the shared timer rules. With a positive target,
+the app waits before drawing a candidate for the last remaining word. This
+can also delay a rejected final-word attempt; it never uses hints.
 
 Run the focused solver tests:
 

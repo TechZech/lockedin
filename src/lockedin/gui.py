@@ -20,12 +20,14 @@ from .queens.browser import QueensBrowserSession
 from .queens.workflow import solve_and_report as solve_queens_and_report
 from .patches.browser import PatchesBrowserSession
 from .patches.workflow import solve_and_report as solve_patches_and_report
+from .wend.browser import WendBrowserSession
 
 PROFILE = Path.home() / ".lockedin" / "chromium-profile"
 SUDOKU_PROFILE = Path.home() / ".lockedin" / "sudoku-chromium-profile"
 ZIP_PROFILE = Path.home() / ".lockedin" / "zip-chromium-profile"
 QUEENS_PROFILE = Path.home() / ".lockedin" / "queens-chromium-profile"
 PATCHES_PROFILE = Path.home() / ".lockedin" / "patches-chromium-profile"
+WEND_PROFILE = Path.home() / ".lockedin" / "wend-chromium-profile"
 
 
 Progress = Callable[[int, int], None]
@@ -47,7 +49,7 @@ class GameAdapter(Protocol[SessionT]):
     def open(self, session: SessionT, test: bool, stop: threading.Event) -> None: ...
     def solve(self, session: SessionT, stop: threading.Event, progress: Progress,
               on_start: Callable[[], None], target_seconds: int, test: bool,
-              status: Callable[[str], None]) -> None: ...
+              status: Callable[[str], None]) -> bool | None: ...
 
 
 class TangoAdapter:
@@ -160,6 +162,26 @@ class PatchesAdapter:
                                 status=status)
 
 
+class WendAdapter:
+    name = "Wend"
+
+    def launch(self, profile: Path, test: bool) -> WendBrowserSession:
+        return (WendBrowserSession.launch_temporary() if test
+                else WendBrowserSession.launch_persistent(profile))
+
+    def open(self, session: WendBrowserSession, test: bool, stop: threading.Event) -> None:
+        if test:
+            session.open_wend()
+        else:
+            session.open_logged_in_wend(stop)
+
+    def solve(self, session: WendBrowserSession, stop: threading.Event, progress: Progress,
+              on_start: Callable[[], None], target_seconds: int, _test: bool,
+              status: Callable[[str], None]) -> bool:
+        on_start()
+        return session.solve_trials(stop=stop, progress=progress, target_seconds=target_seconds, status=status)
+
+
 class GameWorker(Generic[SessionT]):
     """Keep Playwright and its browser on one background thread."""
 
@@ -208,17 +230,20 @@ class GameWorker(Generic[SessionT]):
                     if self.test:
                         start_message = ("Test mode: drawing the path..." if self.adapter.name == "Zip"
                                          else "Test mode: drawing patches..." if self.adapter.name == "Patches"
+                                         else "Test mode: drawing words..." if self.adapter.name == "Wend"
                                          else "Test mode: clicking the board...")
                         progress_prefix = "Test mode"
                         ready_message = "Test board matches the solution; game completion was not verified."
                     else:
                         start_message = ("Drawing the signed-in game path..." if self.adapter.name == "Zip"
                                          else "Drawing the signed-in game patches..." if self.adapter.name == "Patches"
+                                         else "Drawing the signed-in game words..." if self.adapter.name == "Wend"
                                          else "Clicking the signed-in game board...")
                         progress_prefix = "Signed-in game"
                         ready_message = "Board matches the solution; game completion was not verified."
                     def report_progress(done: int, total: int) -> None:
-                        unit = "patches" if self.adapter.name == "Patches" else "cells"
+                        unit = ("patches" if self.adapter.name == "Patches"
+                                else "words" if self.adapter.name == "Wend" else "cells")
                         self.messages.put(("status", f"{progress_prefix}: filled {done}/{total} {unit}."))
                     timing_notice = ""
                     def report_timing(message: str) -> None:
@@ -227,11 +252,14 @@ class GameWorker(Generic[SessionT]):
                             timing_notice = f" {message}"
                             print(message, flush=True)
                         self.messages.put(("status", message))
-                    self.adapter.solve(
+                    result = self.adapter.solve(
                         session, self.stop, report_progress,
                         lambda: self.messages.put(("status", start_message)),
                         target_seconds, self.test, report_timing,
                     )
+                    if self.adapter.name == "Wend":
+                        ready_message = ("Wend solved; LinkedIn confirmed completion." if result
+                                         else "All Wend words locked; game completion was not verified.")
                     self.messages.put(("ready", ready_message + timing_notice))
                 except (BrowserSessionError, ValueError) as error:
                     if not self.stop.is_set():
@@ -241,7 +269,7 @@ class GameWorker(Generic[SessionT]):
                             if self.test
                             else " The game board may be partially filled; retry to re-read it."
                         )
-                        if self.adapter.name == "Zip":
+                        if self.adapter.name in ("Zip", "Wend"):
                             suffix = " The path may be partially drawn; reset the board before retrying."
                         elif self.adapter.name == "Queens":
                             suffix = (" The board may be partially filled; check X marks before retrying, "
@@ -285,6 +313,11 @@ class PatchesWorker(GameWorker[PatchesBrowserSession]):
         super().__init__(PatchesAdapter(), profile, test)
 
 
+class WendWorker(GameWorker[WendBrowserSession]):
+    def __init__(self, profile: Path = WEND_PROFILE, test: bool = False) -> None:
+        super().__init__(WendAdapter(), profile, test)
+
+
 def parse_target_seconds(value: str) -> int:
     value = value.strip()
     if not value:
@@ -321,10 +354,10 @@ def main() -> int:
     ttk.Label(frame, text="LinkedIn game solvers", font=("Helvetica", 18, "bold")).grid(pady=(0, 12))
     status = tk.StringVar(value="Solve today's game, or use the test button for a signed-out practice board.")
     ttk.Label(frame, textvariable=status, wraplength=380).grid(pady=(0, 12))
-    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker | QueensWorker | PatchesWorker] = {}
+    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker | QueensWorker | PatchesWorker | WendWorker] = {}
     buttons: dict[tuple[str, bool], ttk.Button] = {}
     worker_types = {"Tango": TangoWorker, "Mini Sudoku": MiniSudokuWorker, "Zip": ZipWorker,
-                    "Queens": QueensWorker, "Patches": PatchesWorker}
+                    "Queens": QueensWorker, "Patches": PatchesWorker, "Wend": WendWorker}
     times = {game: tk.StringVar(value="") for game in worker_types}
     closing = False
 
