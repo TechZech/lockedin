@@ -1,11 +1,11 @@
 # TechZech's LockedIn
 
-A Python project for solving and playing LinkedIn Tango through a verified,
-deterministic pipeline.
+A Python project for solving and playing LinkedIn Tango, Mini Sudoku, Zip, Queens, and Patches through
+a verified, deterministic pipeline.
 
 This repo is intentionally structured in phases:
 
-1. solve the logical Tango puzzle from board + constraints
+1. solve the logical puzzle from its board and rules
 2. validate the solver with regression tests
 3. read a live board from a browser or a screen
 4. plan and execute clicks safely
@@ -27,10 +27,21 @@ The end-to-end pipeline covers:
 
 The solver and verified click executor have been tested locally and on live
 Tango boards. Live page compatibility can change and needs continued validation.
+Mini Sudoku has a separate 6x6 solver and browser adapter. Its signed-out live
+flow and signed-in fixture flow are tested; the signed-in live flow still needs
+validation. Zip has a separate path solver and keyboard-based browser adapter.
+Its signed-out live flow has been tested on a board without walls; live wall
+rendering and the signed-in flow still need validation.
+Queens has a separate region-aware solver and click adapter. Its signed-out live
+flow has been tested; the signed-in live flow still needs validation.
+Patches has a rectangle solver and drag adapter. Its signed-out live flow,
+including the timed final patch, has been tested; the signed-in live flow still
+needs validation. Its browser integration reads English accessible labels and
+can stop if LinkedIn changes its markup.
 
-There is also a simple desktop UI. It opens today's Tango game in a dedicated
-browser, waits for the board, prints the solution and click plan, and plays the
-signed-in game. Its separate signed-out test mode also attempts verified clicks.
+The desktop UI opens each game in a dedicated browser, waits for the board,
+prints the solution and action plan, and plays the signed-in game. Separate
+signed-out test modes also perform verified inputs.
 
 ---
 
@@ -46,8 +57,41 @@ lockedin/
 │   └── lockedin/
 │       ├── __init__.py
 │       ├── __main__.py
+│       ├── browser.py
 │       ├── cli.py
 │       ├── gui.py
+│       ├── patches/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
+│       ├── queens/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
+│       ├── mini_sudoku/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
+│       ├── zip/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
 │       └── tango/
 │           ├── __init__.py
 │           ├── actions.py
@@ -59,6 +103,12 @@ lockedin/
 ├── tests/
 │   ├── test_cli.py
 │   ├── test_gui.py
+│   ├── test_mini_sudoku.py
+│   ├── test_mini_sudoku_browser.py
+│   ├── test_patches.py
+│   ├── test_patches_browser.py
+│   ├── test_queens.py
+│   ├── test_queens_browser.py
 │   ├── test_tango_actions.py
 │   ├── test_tango_browser.py
 │   ├── test_tango_dom.py
@@ -131,6 +181,82 @@ sensitive session data; keep it private. If sign-in times out, verification
 blocks access, the board cannot be read, or the solver stalls, check the message
 in the window and the terminal output, then click **Solve Tango** to retry.
 
+Each game has a **time (seconds)** field shared by its Solve and Test buttons.
+Leave it blank or enter `0` to finish as fast as possible. For a positive whole
+number, the app performs the other inputs first, then waits until the visible
+game timer reaches that many seconds before the final input. If the timer has
+already passed the target, it finishes immediately; solving and input delays
+can also make the result later than requested. The target is a minimum, not a
+guaranteed exact completion time or a guarantee that LinkedIn saves the game.
+If the timer is not visible, all games instead use an estimated timer and
+report that fallback in the UI and terminal. The estimate starts when the app
+detects the playable board (or first reads it for a CLI-style session), so
+time spent playing before detection is unknown and completion may be later
+than requested. If a previously visible timer disappears, the estimate
+continues from its last observed value. Estimates cannot account for game
+pauses or resets and do not guarantee LinkedIn's recorded time. Ambiguous or
+invalid timers and timers that stop advancing still stop execution without
+the final input. Closing the desktop window cancels a wait.
+
+**Solve Mini Sudoku** and **Solve Mini Sudoku Test** follow the same signed-in
+and signed-out flows. The signed-in Sudoku browser uses a separate persistent
+profile at `~/.lockedin/sudoku-chromium-profile`, so sign in there separately.
+Both profiles contain sensitive session data; keep them private. The desktop
+workflow clicks **Solve now** when the Mini Sudoku intro screen appears. Turn
+**Notes OFF** before execution. The solver preserves existing numbers
+and rejects invalid or ambiguous boards. It verifies the 2x3 region layout,
+each cell selection and entry, and the final board; it does not verify game
+completion. If execution stops, the board may be partially filled: retry to
+read it and make a fresh plan.
+
+**Solve Zip** and **Solve Zip Test** follow the same signed-in and signed-out
+flows. Start the game in the browser when prompted. The signed-in browser uses
+the separate profile `~/.lockedin/zip-chromium-profile`; it contains sensitive
+session data. Zip reads the numbered cells and walls, finds a path through every
+cell, and uses arrow keys to draw it. It checks the board and each path update,
+but does not verify game completion. Reset a partially drawn path before
+retrying. The wall adapter depends on LinkedIn's current rendered CSS classes
+and may need updating if the site changes.
+
+The CLI also supports `python -m lockedin zip` for a dry run against an
+already-open CDP browser, or `python -m lockedin zip --execute` to draw the
+path. As with the desktop flow, start the board first.
+
+**Solve Queens** and **Solve Queens Test** use the same signed-in and separate
+signed-out workflows. Start the game when prompted. The signed-in browser
+uses `~/.lockedin/queens-chromium-profile`, which contains sensitive session
+data. The solver enforces one queen per row, column and color region, and
+prevents queens from touching, including diagonally. Existing queens and X
+marks are treated as constraints; incorrect marks may make the puzzle
+unsolvable. Ambiguous boards are rejected rather than guessed. The adapter
+reads the English accessible cell labels, verifies every click and checks the
+final board, but does not confirm game completion. It supports LinkedIn's
+**Auto-place X's** setting: X marks added to cells ruled out by the newly
+placed queen are checked and preserved. Other unexpected changes still stop
+execution. If a run stops after the
+first click on a cell, that cell remains marked X: clear any unintended X
+before retrying.
+
+The Queens time field follows the shared timer rules above. For a positive
+target, it holds the second click on the final queen until the game timer
+or estimated timer reaches the target.
+The CLI supports `python -m lockedin queens` for a dry run and
+`python -m lockedin queens --execute` for clicks on an already-started CDP
+browser game.
+
+**Solve Patches** and **Solve Patches Test** use the same signed-in and separate
+signed-out workflows. Start the game when prompted. The signed-in browser uses
+`~/.lockedin/patches-chromium-profile`, which contains sensitive session data.
+The solver preserves existing valid patches and rejects boards with no solution
+or multiple solutions. It verifies every dragged rectangle and the final board,
+but does not confirm game completion. If a run stops, retry to read the current
+board; remove incorrect patches manually if they prevent a solution.
+
+The Patches time field follows the shared timer rules above; the final patch is
+drawn only after the target is reached. The CLI supports
+`python -m lockedin patches` for a dry run and
+`python -m lockedin patches --execute` for an already-started CDP browser game.
+
 Run the focused solver tests:
 
 ```bash
@@ -182,6 +308,17 @@ If you want to call the installed entry point directly:
 source .venv/bin/activate
 lockedin tango --execute
 ```
+
+For Mini Sudoku, open and start the game in the CDP browser, then run:
+
+```bash
+python -m lockedin mini-sudoku              # dry run
+python -m lockedin mini-sudoku --execute    # enter the solution
+```
+
+The default page filter selects a Mini Sudoku game tab; use
+`--page-url-contains` to select a different matching tab. Execution requires
+Notes to be off. A signed-out game may run inside LinkedIn's game iframe.
 
 ---
 
