@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 from threading import Event
-from time import monotonic, time
-from typing import Any, Callable, Protocol
+from time import monotonic
+from typing import Callable
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 
+from ..browser import BrowserSession, BrowserSessionError
+from ..browser import FEED_URL as FEED_URL
 from .actions import ActionPlan, create_action_plan
 from .dom import SNAPSHOT_SCRIPT, board_from_json
 from .model import BOARD_SIZE, Board, Cell
@@ -18,144 +18,22 @@ from .solver import Solver
 from .workflow import plan_board
 
 TANGO_URL = "https://www.linkedin.com/games/tango/"
-FEED_URL = "https://www.linkedin.com/feed/"
 GRID_CELLS = '[data-testid="interactive-grid"] [data-testid^="cell-"][data-cell-idx]'
 CLICK_TIMEOUT_MS = 2000
 STATE_TIMEOUT = 2.0
 POLL_INTERVAL_MS = 50
 
 
-class BrowserPage(Protocol):
-    url: str
-
-    def evaluate(self, expression: str) -> Any: ...
-
-    def goto(self, url: str, *, wait_until: str) -> Any: ...
-
-    def is_closed(self) -> bool: ...
-
-    def locator(self, selector: str) -> Any: ...
-
-    def wait_for_timeout(self, timeout: float) -> None: ...
-
-
-class BrowserSessionError(RuntimeError):
-    """Raised when a usable Tango browser page cannot be found."""
-
-
-@dataclass(slots=True)
-class TangoBrowserSession:
+class TangoBrowserSession(BrowserSession):
     """Own a connection to an existing, logged-in Chromium browser."""
-
-    page: BrowserPage
-    _playwright: Any = None
-    _browser: Any = None
-    _context: Any = None
-    require_login: bool = True
-    _owns_browser: bool = False
-
-    @classmethod
-    def launch_temporary(cls) -> TangoBrowserSession:
-        """Open a throwaway, signed-out browser so test runs never touch the live profile."""
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as error:
-            raise BrowserSessionError("install Playwright before opening the browser") from error
-
-        playwright = sync_playwright().start()
-        browser = None
-        try:
-            browser = playwright.chromium.launch(headless=False)
-            context = browser.new_context()
-            page = context.new_page()
-            return cls(
-                page=page,
-                _playwright=playwright,
-                _browser=browser,
-                _context=context,
-                require_login=False,
-                _owns_browser=True,
-            )
-        except Exception as error:
-            if browser is not None:
-                browser.close()
-            playwright.stop()
-            raise BrowserSessionError(
-                f"could not open the test browser: {error}. "
-                "Make sure Chromium is installed with 'python -m playwright install chromium'."
-            ) from error
 
     def open_tango(self) -> None:
         """Go straight to the game without requiring a LinkedIn login."""
-        try:
-            self.page.goto(TANGO_URL, wait_until="domcontentloaded")
-        except Exception as error:
-            raise BrowserSessionError(f"could not open Tango: {error}") from error
-
-    @classmethod
-    def launch_persistent(cls, profile: Path) -> TangoBrowserSession:
-        """Open a separate, persistent Chromium profile."""
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as error:
-            raise BrowserSessionError("install Playwright before opening the browser") from error
-
-        profile.mkdir(mode=0o700, parents=True, exist_ok=True)
-        playwright = sync_playwright().start()
-        context = None
-        try:
-            context = playwright.chromium.launch_persistent_context(str(profile), headless=False)
-            page = context.pages[0] if context.pages else context.new_page()
-            return cls(page=page, _playwright=playwright, _context=context)
-        except Exception as error:
-            if context is not None:
-                context.close()
-            playwright.stop()
-            raise BrowserSessionError(
-                f"could not open the Tango browser: {error}. "
-                "Make sure Chromium is installed with 'python -m playwright install chromium'."
-            ) from error
+        self.open_game(TANGO_URL, "Tango")
 
     def open_logged_in_tango(self, stop: Event, timeout: float = 300) -> None:
         """Require a LinkedIn login before navigating to the Tango game."""
-        if self._context is None:
-            raise BrowserSessionError("a dedicated browser context is required for sign-in")
-        if stop.is_set():
-            raise BrowserSessionError("the solve was cancelled")
-        try:
-            self.page.goto(FEED_URL, wait_until="domcontentloaded")
-            deadline = monotonic() + timeout
-            while not stop.is_set():
-                if self.page.is_closed():
-                    raise BrowserSessionError("the browser was closed during sign-in")
-                url = urlsplit(self.page.url)
-                if (
-                    url.scheme == "https"
-                    and url.hostname in ("linkedin.com", "www.linkedin.com")
-                    and url.path.rstrip("/") == "/feed"
-                    and self._has_login_cookie()
-                ):
-                    if stop.is_set():
-                        break
-                    self.page.goto(TANGO_URL, wait_until="domcontentloaded")
-                    return
-                if monotonic() >= deadline:
-                    raise BrowserSessionError(
-                        "timed out waiting for LinkedIn sign-in; sign in and complete any verification, then try again"
-                    )
-                self.page.wait_for_timeout(250)
-        except BrowserSessionError:
-            raise
-        except Exception as error:
-            raise BrowserSessionError(f"could not open LinkedIn or Tango: {error}") from error
-        raise BrowserSessionError("the solve was cancelled")
-
-    def _has_login_cookie(self) -> bool:
-        return any(
-            cookie["name"] == "li_at"
-            and (cookie["expires"] == -1 or cookie["expires"] > time())
-            for cookie in self._context.cookies("https://www.linkedin.com")
-        )
+        self.open_logged_in_game(TANGO_URL, "Tango", stop, timeout)
 
     def wait_for_board(self, stop: Event, timeout: float = 300) -> None:
         """Wait for the game to start without blocking the desktop window."""
@@ -170,45 +48,12 @@ class TangoBrowserSession:
                 and url.path.rstrip("/") == "/games/tango"
                 and self.page.locator(GRID_CELLS).count() == 36
             ):
-                if self.require_login and self._context is not None and not self._has_login_cookie():
-                    raise BrowserSessionError("LinkedIn sign-in expired; please try again")
+                self.check_login()
                 return
             if monotonic() >= deadline:
                 raise BrowserSessionError("timed out waiting for the Tango board; sign in and start the game")
             self.page.wait_for_timeout(250)
         raise BrowserSessionError("the solve was cancelled")
-
-    def keep_alive(self) -> None:
-        """Allow Playwright to process browser events while waiting for another request."""
-        if self.page.is_closed():
-            raise BrowserSessionError("the Tango browser was closed")
-        self.page.wait_for_timeout(200)
-
-    @classmethod
-    def connect_over_cdp(
-        cls,
-        cdp_url: str = "http://127.0.0.1:9222",
-        page_url_contains: str = "linkedin.com",
-    ) -> TangoBrowserSession:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError as error:
-            raise BrowserSessionError("install Playwright before connecting to a browser") from error
-
-        playwright = sync_playwright().start()
-        try:
-            browser = playwright.chromium.connect_over_cdp(cdp_url)
-            pages = [page for context in browser.contexts for page in context.pages]
-            page = next((page for page in pages if page_url_contains in page.url), None)
-            if page is None:
-                raise BrowserSessionError("no matching LinkedIn page found in the browser")
-            return cls(page=page, _playwright=playwright, _browser=browser)
-        except BrowserSessionError:
-            playwright.stop()
-            raise
-        except Exception as error:
-            playwright.stop()
-            raise BrowserSessionError(f"could not connect to browser at {cdp_url}") from error
 
     def snapshot_board(self) -> Board:
         try:
@@ -311,13 +156,3 @@ class TangoBrowserSession:
                 raise BrowserSessionError(
                     f"could not verify cell {index} after clicking; its state may have changed: {error}"
                 ) from error
-
-    def close(self) -> None:
-        try:
-            if self._context is not None:
-                self._context.close()
-            if self._owns_browser and self._browser is not None:
-                self._browser.close()
-        finally:
-            if self._playwright is not None:
-                self._playwright.stop()
