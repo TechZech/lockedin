@@ -1,11 +1,11 @@
 # TechZech's LockedIn
 
-A Python project for solving and playing LinkedIn Tango through a verified,
-deterministic pipeline.
+A Python project for solving and playing LinkedIn Tango and Mini Sudoku through
+a verified, deterministic pipeline.
 
 This repo is intentionally structured in phases:
 
-1. solve the logical Tango puzzle from board + constraints
+1. solve the logical puzzle from its board and rules
 2. validate the solver with regression tests
 3. read a live board from a browser or a screen
 4. plan and execute clicks safely
@@ -27,10 +27,13 @@ The end-to-end pipeline covers:
 
 The solver and verified click executor have been tested locally and on live
 Tango boards. Live page compatibility can change and needs continued validation.
+Mini Sudoku has a separate 6x6 solver and browser adapter. Its signed-out live
+flow and signed-in fixture flow are tested; the signed-in live flow still needs
+validation.
 
-There is also a simple desktop UI. It opens today's Tango game in a dedicated
-browser, waits for the board, prints the solution and click plan, and plays the
-signed-in game. Its separate signed-out test mode also attempts verified clicks.
+The desktop UI opens either game in a dedicated browser, waits for the board,
+prints the solution and action plan, and plays the signed-in game. Separate
+signed-out test modes also perform verified inputs.
 
 ---
 
@@ -46,8 +49,17 @@ lockedin/
 │   └── lockedin/
 │       ├── __init__.py
 │       ├── __main__.py
+│       ├── browser.py
 │       ├── cli.py
 │       ├── gui.py
+│       ├── mini_sudoku/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
 │       └── tango/
 │           ├── __init__.py
 │           ├── actions.py
@@ -59,6 +71,8 @@ lockedin/
 ├── tests/
 │   ├── test_cli.py
 │   ├── test_gui.py
+│   ├── test_mini_sudoku.py
+│   ├── test_mini_sudoku_browser.py
 │   ├── test_tango_actions.py
 │   ├── test_tango_browser.py
 │   ├── test_tango_dom.py
@@ -131,6 +145,17 @@ sensitive session data; keep it private. If sign-in times out, verification
 blocks access, the board cannot be read, or the solver stalls, check the message
 in the window and the terminal output, then click **Solve Tango** to retry.
 
+**Solve Mini Sudoku** and **Solve Mini Sudoku Test** follow the same signed-in
+and signed-out flows. The signed-in Sudoku browser uses a separate persistent
+profile at `~/.lockedin/sudoku-chromium-profile`, so sign in there separately.
+Both profiles contain sensitive session data; keep them private. The desktop
+workflow clicks **Solve now** when the Mini Sudoku intro screen appears. Turn
+**Notes OFF** before execution. The solver preserves existing numbers
+and rejects invalid or ambiguous boards. It verifies the 2x3 region layout,
+each cell selection and entry, and the final board; it does not verify game
+completion. If execution stops, the board may be partially filled: retry to
+read it and make a fresh plan.
+
 Run the focused solver tests:
 
 ```bash
@@ -182,6 +207,17 @@ If you want to call the installed entry point directly:
 source .venv/bin/activate
 lockedin tango --execute
 ```
+
+For Mini Sudoku, open and start the game in the CDP browser, then run:
+
+```bash
+python -m lockedin mini-sudoku              # dry run
+python -m lockedin mini-sudoku --execute    # enter the solution
+```
+
+The default page filter selects a Mini Sudoku game tab; use
+`--page-url-contains` to select a different matching tab. Execution requires
+Notes to be off. A signed-out game may run inside LinkedIn's game iframe.
 
 ---
 
