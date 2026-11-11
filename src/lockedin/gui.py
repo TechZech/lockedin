@@ -18,11 +18,14 @@ from .zip.browser import ZipBrowserSession
 from .zip.workflow import solve_and_report as solve_zip_and_report
 from .queens.browser import QueensBrowserSession
 from .queens.workflow import solve_and_report as solve_queens_and_report
+from .patches.browser import PatchesBrowserSession
+from .patches.workflow import solve_and_report as solve_patches_and_report
 
 PROFILE = Path.home() / ".lockedin" / "chromium-profile"
 SUDOKU_PROFILE = Path.home() / ".lockedin" / "sudoku-chromium-profile"
 ZIP_PROFILE = Path.home() / ".lockedin" / "zip-chromium-profile"
 QUEENS_PROFILE = Path.home() / ".lockedin" / "queens-chromium-profile"
+PATCHES_PROFILE = Path.home() / ".lockedin" / "patches-chromium-profile"
 
 
 Progress = Callable[[int, int], None]
@@ -135,6 +138,28 @@ class QueensAdapter:
                                 status=status)
 
 
+class PatchesAdapter:
+    name = "Patches"
+
+    def launch(self, profile: Path, test: bool) -> PatchesBrowserSession:
+        return (PatchesBrowserSession.launch_temporary() if test
+                else PatchesBrowserSession.launch_persistent(profile))
+
+    def open(self, session: PatchesBrowserSession, test: bool, stop: threading.Event) -> None:
+        if test:
+            session.open_patches()
+        else:
+            session.open_logged_in_patches(stop)
+
+    def solve(self, session: PatchesBrowserSession, stop: threading.Event, progress: Progress,
+              on_start: Callable[[], None], target_seconds: int, _test: bool,
+              status: Callable[[str], None]) -> None:
+        plan = solve_patches_and_report(session)
+        on_start()
+        session.execute_actions(plan, stop=stop, progress=progress, target_seconds=target_seconds,
+                                status=status)
+
+
 class GameWorker(Generic[SessionT]):
     """Keep Playwright and its browser on one background thread."""
 
@@ -182,16 +207,19 @@ class GameWorker(Generic[SessionT]):
                     self.messages.put(("status", "Reading and solving the board..."))
                     if self.test:
                         start_message = ("Test mode: drawing the path..." if self.adapter.name == "Zip"
+                                         else "Test mode: drawing patches..." if self.adapter.name == "Patches"
                                          else "Test mode: clicking the board...")
                         progress_prefix = "Test mode"
                         ready_message = "Test board matches the solution; game completion was not verified."
                     else:
                         start_message = ("Drawing the signed-in game path..." if self.adapter.name == "Zip"
+                                         else "Drawing the signed-in game patches..." if self.adapter.name == "Patches"
                                          else "Clicking the signed-in game board...")
                         progress_prefix = "Signed-in game"
                         ready_message = "Board matches the solution; game completion was not verified."
                     def report_progress(done: int, total: int) -> None:
-                        self.messages.put(("status", f"{progress_prefix}: filled {done}/{total} cells."))
+                        unit = "patches" if self.adapter.name == "Patches" else "cells"
+                        self.messages.put(("status", f"{progress_prefix}: filled {done}/{total} {unit}."))
                     timing_notice = ""
                     def report_timing(message: str) -> None:
                         nonlocal timing_notice
@@ -252,6 +280,11 @@ class QueensWorker(GameWorker[QueensBrowserSession]):
         super().__init__(QueensAdapter(), profile, test)
 
 
+class PatchesWorker(GameWorker[PatchesBrowserSession]):
+    def __init__(self, profile: Path = PATCHES_PROFILE, test: bool = False) -> None:
+        super().__init__(PatchesAdapter(), profile, test)
+
+
 def parse_target_seconds(value: str) -> int:
     value = value.strip()
     if not value:
@@ -288,10 +321,10 @@ def main() -> int:
     ttk.Label(frame, text="LinkedIn game solvers", font=("Helvetica", 18, "bold")).grid(pady=(0, 12))
     status = tk.StringVar(value="Solve today's game, or use the test button for a signed-out practice board.")
     ttk.Label(frame, textvariable=status, wraplength=380).grid(pady=(0, 12))
-    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker | QueensWorker] = {}
+    workers: dict[tuple[str, bool], TangoWorker | MiniSudokuWorker | ZipWorker | QueensWorker | PatchesWorker] = {}
     buttons: dict[tuple[str, bool], ttk.Button] = {}
     worker_types = {"Tango": TangoWorker, "Mini Sudoku": MiniSudokuWorker, "Zip": ZipWorker,
-                    "Queens": QueensWorker}
+                    "Queens": QueensWorker, "Patches": PatchesWorker}
     times = {game: tk.StringVar(value="") for game in worker_types}
     closing = False
 

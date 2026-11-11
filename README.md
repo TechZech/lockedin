@@ -1,6 +1,6 @@
 # TechZech's LockedIn
 
-A Python project for solving and playing LinkedIn Tango, Mini Sudoku, Zip, and Queens through
+A Python project for solving and playing LinkedIn Tango, Mini Sudoku, Zip, Queens, and Patches through
 a verified, deterministic pipeline.
 
 This repo is intentionally structured in phases:
@@ -34,6 +34,10 @@ Its signed-out live flow has been tested on a board without walls; live wall
 rendering and the signed-in flow still need validation.
 Queens has a separate region-aware solver and click adapter. Its signed-out live
 flow has been tested; the signed-in live flow still needs validation.
+Patches has a rectangle solver and drag adapter. Its signed-out live flow,
+including the timed final patch, has been tested; the signed-in live flow still
+needs validation. Its browser integration reads English accessible labels and
+can stop if LinkedIn changes its markup.
 
 The desktop UI opens each game in a dedicated browser, waits for the board,
 prints the solution and action plan, and plays the signed-in game. Separate
@@ -56,6 +60,14 @@ lockedin/
 │       ├── browser.py
 │       ├── cli.py
 │       ├── gui.py
+│       ├── patches/
+│       │   ├── __init__.py
+│       │   ├── actions.py
+│       │   ├── browser.py
+│       │   ├── dom.py
+│       │   ├── model.py
+│       │   ├── solver.py
+│       │   └── workflow.py
 │       ├── queens/
 │       │   ├── __init__.py
 │       │   ├── actions.py
@@ -93,6 +105,8 @@ lockedin/
 │   ├── test_gui.py
 │   ├── test_mini_sudoku.py
 │   ├── test_mini_sudoku_browser.py
+│   ├── test_patches.py
+│   ├── test_patches_browser.py
 │   ├── test_queens.py
 │   ├── test_queens_browser.py
 │   ├── test_tango_actions.py
@@ -229,6 +243,19 @@ or estimated timer reaches the target.
 The CLI supports `python -m lockedin queens` for a dry run and
 `python -m lockedin queens --execute` for clicks on an already-started CDP
 browser game.
+
+**Solve Patches** and **Solve Patches Test** use the same signed-in and separate
+signed-out workflows. Start the game when prompted. The signed-in browser uses
+`~/.lockedin/patches-chromium-profile`, which contains sensitive session data.
+The solver preserves existing valid patches and rejects boards with no solution
+or multiple solutions. It verifies every dragged rectangle and the final board,
+but does not confirm game completion. If a run stops, retry to read the current
+board; remove incorrect patches manually if they prevent a solution.
+
+The Patches time field follows the shared timer rules above; the final patch is
+drawn only after the target is reached. The CLI supports
+`python -m lockedin patches` for a dry run and
+`python -m lockedin patches --execute` for an already-started CDP browser game.
 
 Run the focused solver tests:
 
