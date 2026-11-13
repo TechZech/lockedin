@@ -72,18 +72,24 @@ SNAPSHOT_SCRIPT = r"""
   if (!columns || !cells.length || cells.length % columns) throw new Error('Invalid grid layout');
   return JSON.stringify({columns, rows: cells.length / columns, cells: cells.map(cell => {
     if (!/^(0|[1-9]\d*)$/.test(cell.dataset.cellIdx)) throw new Error('Invalid cell index');
-    if (!cell.firstElementChild?.classList.contains('i87nfu'))
+    const layout = cell.firstElementChild?.classList.contains('i87nfu')
+      ? ['i87nf0', 'i87nf2', 'i87nf3', 'i87nf4']
+      : cell.firstElementChild?.classList.contains('jkfnca')
+      ? ['jkfncg', 'jkfnch', 'jkfnci', 'jkfncj']
+      : null;
+    if (!layout)
       throw new Error('Unsupported Zip cell layout; wall detection unavailable');
-    const walls = [...cell.children].filter(e => e.classList.contains('i87nf0'));
-    if (walls.some(e => !['i87nf2', 'i87nf3', 'i87nf4'].some(c => e.classList.contains(c))))
+    const [wallClass, leftClass, rightClass, downClass] = layout;
+    const walls = [...cell.children].filter(e => e.classList.contains(wallClass));
+    if (walls.some(e => ![leftClass, rightClass, downClass].some(c => e.classList.contains(c))))
       throw new Error('Unsupported Zip wall');
     const clues = cell.querySelectorAll('[data-cell-content]');
     if (clues.length > 1) throw new Error('Multiple waypoints in cell');
     return {
       index: Number(cell.dataset.cellIdx),
       clue: clues.length ? clues[0].textContent.trim() : '',
-      right: walls.some(e => e.classList.contains('i87nf3')),
-      down: walls.some(e => e.classList.contains('i87nf4')),
+      right: walls.some(e => e.classList.contains(rightClass)),
+      down: walls.some(e => e.classList.contains(downClass)),
       filled: cell.querySelectorAll('[data-testid="filled-cell"]').length > 0
     };
   })});
