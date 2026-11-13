@@ -157,6 +157,29 @@ class ZipBrowserTests(unittest.TestCase):
         with self.assertRaisesRegex(BrowserSessionError, "Unsupported Zip wall"):
             self.session.snapshot_board()
 
+    def test_current_layout_detects_walls_and_rejects_unknown_marker(self):
+        self.page.evaluate("""() => {
+          for (const cell of document.querySelectorAll('[data-cell-idx]')) {
+            cell.firstElementChild.className = 'jkfnca jkfnb9 jkfj1x';
+          }
+          document.querySelector('.i87nf0').className = 'jkfncg jkfnci';
+          document.querySelector('[data-cell-idx="1"]').insertAdjacentHTML(
+            'beforeend', '<div class="jkfncg jkfnch"></div>');
+        }""")
+        board = self.session.snapshot_board()
+        self.assertEqual(board.walls, frozenset({(0, 1)}))
+        self.session.execute_actions(plan_board(board))
+        self.assertEqual(self.session._snapshot().filled, frozenset(range(4)))
+        self.page.locator('[data-cell-idx="1"]').evaluate(
+            """e => e.insertAdjacentHTML('beforeend', '<div class="jkfncg jkfncj"></div>')"""
+        )
+        self.assertEqual(self.session.snapshot_board().walls, frozenset({(0, 1), (1, 3)}))
+        self.page.locator('[data-cell-idx="0"] .jkfncg').evaluate(
+            "e => e.className = 'jkfncg unknown'"
+        )
+        with self.assertRaisesRegex(BrowserSessionError, "Unsupported Zip wall"):
+            self.session.snapshot_board()
+
 
 class ZipWorkerTests(unittest.TestCase):
     @patch("lockedin.gui.ZipBrowserSession.launch_temporary")
