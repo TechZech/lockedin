@@ -59,9 +59,9 @@ stalled timers stop execution before the final input.
 ### Game-specific notes
 
 - **Mini Sudoku:** Turn **Notes OFF** before execution.
-- **Zip:** Reset a partially drawn path before retrying. Wall detection depends
-  on LinkedIn's CSS; unsupported cell layouts stop the run rather than assume
-  there are no walls.
+- **Zip:** Reset a partially drawn path before retrying. Wall detection reads
+  rendered CSS borders instead of generated class names; unsupported layouts
+  stop the run, but future changes to wall rendering may still require updates.
 - **Queens:** Check for unintended X marks after an interrupted run,
   especially on the last attempted cell.
 - **Patches:** Remove incorrect patches if they prevent a new solution.
