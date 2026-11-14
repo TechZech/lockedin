@@ -70,28 +70,63 @@ SNAPSHOT_SCRIPT = r"""
   const cells = [...grid.querySelectorAll(':scope > [data-cell-idx]')];
   const columns = getComputedStyle(grid).gridTemplateColumns.split(/\s+/).length;
   if (!columns || !cells.length || cells.length % columns) throw new Error('Invalid grid layout');
-  return JSON.stringify({columns, rows: cells.length / columns, cells: cells.map(cell => {
+  const observed = cells.map(cell => {
     if (!/^(0|[1-9]\d*)$/.test(cell.dataset.cellIdx)) throw new Error('Invalid cell index');
-    const layout = cell.firstElementChild?.classList.contains('i87nfu')
-      ? ['i87nf0', 'i87nf2', 'i87nf3', 'i87nf4']
-      : cell.firstElementChild?.classList.contains('jkfnca')
-      ? ['jkfncg', 'jkfnch', 'jkfnci', 'jkfncj']
-      : null;
-    if (!layout)
+    const face = cell.firstElementChild;
+    const bounds = cell.getBoundingClientRect();
+    const faceBounds = face?.getBoundingClientRect();
+    const faceStyle = face && getComputedStyle(face);
+    if (!faceStyle || faceStyle.position !== 'absolute' ||
+        Math.abs(faceBounds.width - bounds.width) > 3 ||
+        Math.abs(faceBounds.height - bounds.height) > 3 ||
+        parseFloat(faceStyle.borderTopWidth) <= 0)
       throw new Error('Unsupported Zip cell layout; wall detection unavailable');
-    const [wallClass, leftClass, rightClass, downClass] = layout;
-    const walls = [...cell.children].filter(e => e.classList.contains(wallClass));
-    if (walls.some(e => ![leftClass, rightClass, downClass].some(c => e.classList.contains(c))))
-      throw new Error('Unsupported Zip wall');
+    let left = false, right = false, down = false;
+    for (const child of [...cell.children].slice(1)) {
+      if (child.hasAttribute('data-cell-content') ||
+          child.matches('[data-testid="filled-cell"], [data-cell-hint-arrow]')) continue;
+      const before = getComputedStyle(child, '::before');
+      const after = getComputedStyle(child, '::after');
+      if (before.content !== 'none' && before.content !== 'normal')
+        throw new Error('Unsupported Zip wall or cell decoration');
+      if (after.content === 'none' || after.content === 'normal') {
+        const rect = child.getBoundingClientRect();
+        if (getComputedStyle(child).position !== 'absolute' ||
+            rect.width <= 0 || rect.height <= 0 ||
+            rect.width >= bounds.width || rect.height >= bounds.height)
+          throw new Error('Unsupported Zip wall or cell decoration');
+        continue;
+      }
+      const sides = ['Top', 'Right', 'Bottom', 'Left'].filter(side =>
+        parseFloat(after[`border${side}Width`]) > 0);
+      if (after.content !== '""' || after.position !== 'absolute' || sides.length !== 1 ||
+          sides[0] === 'Top' || after[`border${sides[0]}Style`] !== 'solid' ||
+          parseFloat(after[`border${sides[0]}Width`]) <= parseFloat(faceStyle.borderTopWidth))
+        throw new Error('Unsupported Zip wall or cell decoration');
+      right ||= sides[0] === 'Right';
+      down ||= sides[0] === 'Bottom';
+      left ||= sides[0] === 'Left';
+    }
     const clues = cell.querySelectorAll('[data-cell-content]');
     if (clues.length > 1) throw new Error('Multiple waypoints in cell');
     return {
       index: Number(cell.dataset.cellIdx),
       clue: clues.length ? clues[0].textContent.trim() : '',
-      right: walls.some(e => e.classList.contains(rightClass)),
-      down: walls.some(e => e.classList.contains(downClass)),
+      left,
+      right,
+      down,
       filled: cell.querySelectorAll('[data-testid="filled-cell"]').length > 0
     };
-  })});
+  });
+  const byIndex = new Map(observed.map(cell => [cell.index, cell]));
+  for (const cell of observed) {
+    if (cell.left) {
+      if (cell.index % columns === 0 || !byIndex.has(cell.index - 1))
+        throw new Error('Zip wall lies outside the grid');
+      byIndex.get(cell.index - 1).right = true;
+    }
+    delete cell.left;
+  }
+  return JSON.stringify({columns, rows: cells.length / columns, cells: observed});
 })()
 """

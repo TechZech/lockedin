@@ -16,7 +16,14 @@ from lockedin.zip.workflow import plan_board
 GAME = """
 <style>
   #grid { display: grid; grid-template-columns: repeat(2, 40px); }
-  [data-cell-idx] { width: 40px; height: 40px; }
+  [data-cell-idx] { width: 40px; height: 40px; position: relative; }
+  .i87nfu, .jkfnca, .new-face { position: absolute; inset: 0; border: 1px solid grey; }
+  .i87nf0::after, .jkfncg::after, .new-wall::after {
+    content: ""; position: absolute; border: 0 solid black;
+  }
+  .i87nf2::after, .jkfnch::after, .new-left::after { border-left-width: 12px; }
+  .i87nf3::after, .jkfnci::after, .new-right::after { border-right-width: 12px; }
+  .i87nf4::after, .jkfncj::after, .new-down::after { border-bottom-width: 12px; }
 </style>
 <div id="grid" data-testid="interactive-grid" data-trail-grid tabindex="0"></div>
 <script>
@@ -176,6 +183,31 @@ class ZipBrowserTests(unittest.TestCase):
         self.assertEqual(self.session.snapshot_board().walls, frozenset({(0, 1), (1, 3)}))
         self.page.locator('[data-cell-idx="0"] .jkfncg').evaluate(
             "e => e.className = 'jkfncg unknown'"
+        )
+        with self.assertRaisesRegex(BrowserSessionError, "Unsupported Zip wall"):
+            self.session.snapshot_board()
+
+    def test_renamed_css_still_detects_wall_borders(self):
+        self.page.evaluate("""() => {
+          for (const cell of document.querySelectorAll('[data-cell-idx]'))
+            cell.firstElementChild.className = 'new-face';
+          document.querySelector('.i87nf0').className = 'new-wall new-right';
+          document.querySelector('[data-cell-idx="1"]').insertAdjacentHTML(
+            'beforeend', '<div class="new-wall new-left"></div><div class="new-wall new-down"></div>');
+        }""")
+        self.assertEqual(self.session.snapshot_board().walls, frozenset({(0, 1), (1, 3)}))
+
+    def test_left_only_wall_is_read_from_adjacent_cell(self):
+        self.page.locator('[data-cell-idx="0"] .i87nf0').evaluate("e => e.remove()")
+        self.page.locator('[data-cell-idx="1"]').evaluate(
+            """e => e.insertAdjacentHTML('beforeend', '<div class="i87nf0 i87nf2"></div>')"""
+        )
+        self.assertEqual(self.session.snapshot_board().walls, frozenset({(0, 1)}))
+
+    def test_unknown_full_size_element_fails_closed(self):
+        self.page.locator('[data-cell-idx="0"]').evaluate(
+            """e => e.insertAdjacentHTML('beforeend',
+              '<div style="position:absolute;inset:0"></div>')"""
         )
         with self.assertRaisesRegex(BrowserSessionError, "Unsupported Zip wall"):
             self.session.snapshot_board()
